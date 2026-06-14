@@ -1,0 +1,123 @@
+{
+  "name": "Video Generator API - Create",
+  "nodes": [
+    {
+      "parameters": {
+        "width": 420,
+        "height": 260,
+        "content": "## Secure video generation\n\nRequires environment variables: `N8N_VIDEO_JWT_SECRET`, `OPENAI_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`.\n\nThe browser must call your website backend, not this webhook directly."
+      },
+      "id": "note-generate",
+      "name": "Setup Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -760,
+        -260
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "video-generate-v2",
+        "authentication": "none",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": ""
+        }
+      },
+      "id": "webhook-generate",
+      "name": "POST /webhook/video-generate",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -740,
+        80
+      ],
+      "webhookId": "b91f7e8a-f702-4ac2-9ae9-86da45490a3a"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst crypto = require('crypto');\nconst fetch = require('node-fetch');\n\nconst ALLOWED_SIZES = new Set(['720x1280', '1280x720', '1024x1792', '1792x1024']);\nconst ALLOWED_DURATIONS = new Set([4, 8, 12]);\nconst ACTIVE_STATUSES = ['queued', 'in_progress'];\n\nfunction response(status, body) {\n  return [{ json: { httpStatus: status, ...body } }];\n}\n\nfunction env(name, fallback = undefined) {\n  const value = $env[name] ?? fallback;\n  if (value === undefined || value === '') throw new Error('Missing required environment variable: ' + name);\n  return value;\n}\n\nfunction b64urlDecode(value) {\n  const normalized = value.replace(/-/g, '+').replace(/_/g, '/');\n  const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4);\n  return Buffer.from(padded, 'base64');\n}\n\nfunction b64urlEncode(buffer) {\n  return Buffer.from(buffer).toString('base64').replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/g, '');\n}\n\nfunction verifyJwt(headers) {\n  const auth = headers.authorization || headers.Authorization || '';\n  const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';\n  if (!token) throw Object.assign(new Error('Unauthorized'), { status: 401 });\n\n  const parts = token.split('.');\n  if (parts.length !== 3) throw Object.assign(new Error('Unauthorized'), { status: 401 });\n\n  const header = JSON.parse(b64urlDecode(parts[0]).toString('utf8'));\n  if (header.alg !== 'HS256') throw Object.assign(new Error('Unauthorized'), { status: 401 });\n\n  const expected = b64urlEncode(crypto.createHmac('sha256', env('N8N_VIDEO_JWT_SECRET')).update(parts[0] + '.' + parts[1]).digest());\n  if (!crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(parts[2]))) {\n    throw Object.assign(new Error('Unauthorized'), { status: 401 });\n  }\n\n  const claims = JSON.parse(b64urlDecode(parts[1]).toString('utf8'));\n  const now = Math.floor(Date.now() / 1000);\n  if (!claims.sub || typeof claims.sub !== 'string') throw Object.assign(new Error('Unauthorized'), { status: 401 });\n  if (claims.exp && now >= claims.exp) throw Object.assign(new Error('Unauthorized'), { status: 401 });\n  if (claims.nbf && now < claims.nbf) throw Object.assign(new Error('Unauthorized'), { status: 401 });\n  if (claims.aud && claims.aud !== ($env.N8N_VIDEO_JWT_AUDIENCE || 'n8n-video-workflow')) {\n    throw Object.assign(new Error('Unauthorized'), { status: 401 });\n  }\n\n  return claims;\n}\n\nfunction userHash(ownerId) {\n  return crypto.createHmac('sha256', env('N8N_VIDEO_USER_HASH_SECRET', env('N8N_VIDEO_JWT_SECRET'))).update(ownerId).digest('hex');\n}\n\nfunction cleanText(value, maxLen) {\n  if (typeof value !== 'string') return '';\n  return value.replace(/\\s+/g, ' ').trim().slice(0, maxLen);\n}\n\nfunction parseClientRequestId(value) {\n  if (typeof value !== 'string') return '';\n  const id = value.trim().toLowerCase();\n  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id)) {\n    throw Object.assign(new Error('clientRequestId must be a UUID'), { status: 400, code: 'invalid_client_request_id' });\n  }\n  return id;\n}\n\nasync function requestJson(url, options = {}) {\n  const res = await fetch(url, options);\n  const text = await res.text();\n  let body = null;\n  try {\n    body = text ? JSON.parse(text) : null;\n  } catch {\n    body = { raw: text };\n  }\n  if (!res.ok) {\n    const err = new Error('HTTP request failed');\n    err.status = res.status;\n    err.body = body;\n    throw err;\n  }\n  return body;\n}\n\nfunction supabaseHeaders(prefer) {\n  const key = env('SUPABASE_SERVICE_ROLE_KEY');\n  const headers = {\n    apikey: key,\n    Authorization: 'Bearer ' + key,\n    'Content-Type': 'application/json',\n  };\n  if (prefer) headers.Prefer = prefer;\n  return headers;\n}\n\nfunction supabaseUrl(path) {\n  return env('SUPABASE_URL').replace(/\\/$/, '') + path;\n}\n\nasync function supabaseSelect(query) {\n  return requestJson(supabaseUrl('/rest/v1/video_jobs?' + query), {\n    method: 'GET',\n    headers: supabaseHeaders(),\n  });\n}\n\nasync function supabaseInsert(row) {\n  return requestJson(supabaseUrl('/rest/v1/video_jobs'), {\n    method: 'POST',\n    headers: supabaseHeaders('return=representation,resolution=merge-duplicates'),\n    body: JSON.stringify(row),\n  });\n}\n\nasync function supabasePatch(query, patch) {\n  return requestJson(supabaseUrl('/rest/v1/video_jobs?' + query), {\n    method: 'PATCH',\n    headers: supabaseHeaders('return=representation'),\n    body: JSON.stringify(patch),\n  });\n}\n\nasync function moderate(input, ownerId) {\n  const body = await requestJson('https://api.openai.com/v1/moderations', {\n    method: 'POST',\n    headers: {\n      Authorization: 'Bearer ' + env('OPENAI_API_KEY'),\n      'Content-Type': 'application/json',\n    },\n    body: JSON.stringify({\n      model: 'omni-moderation-latest',\n      input,\n      safety_identifier: crypto.createHash('sha256').update(ownerId).digest('hex'),\n    }),\n  });\n\n  const result = body.results?.[0] || {};\n  return {\n    flagged: Boolean(result.flagged),\n    raw: body,\n  };\n}\n\nfunction buildPrompt({ idea, style, duration, size }) {\n  const stylePart = style ? ' Visual style: ' + style + '.' : '';\n  const orientation = size.includes('1280') || size.includes('1792') ? 'Use the requested aspect ratio.' : 'Frame for vertical short-form social video.';\n  return [\n    'Create an original short-form video designed for online sharing.',\n    'User idea: ' + idea + '.',\n    stylePart,\n    'Length: ' + duration + ' seconds. ' + orientation,\n    'Start with a visually clear first-second hook, keep motion readable, use strong composition, and avoid on-screen text unless it is essential.',\n    'Do not include real people, public figures, copyrighted characters, copyrighted music, explicit sexual content, graphic violence, illegal instructions, hate, harassment, or unsafe behavior.'\n  ].filter(Boolean).join(' ');\n}\n\nasync function createOpenAiVideo({ prompt, size, duration, ownerId }) {\n  return requestJson('https://api.openai.com/v1/videos', {\n    method: 'POST',\n    headers: {\n      Authorization: 'Bearer ' + env('OPENAI_API_KEY'),\n      'Content-Type': 'application/json',\n      'Idempotency-Key': crypto.createHash('sha256').update(ownerId + ':' + prompt).digest('hex'),\n    },\n    body: JSON.stringify({\n      model: $env.OPENAI_VIDEO_MODEL || 'sora-2',\n      prompt,\n      size,\n      seconds: String(duration),\n    }),\n  });\n}\n\nasync function main() {\n  try {\n    const inbound = $input.first().json || {};\n    const headers = inbound.headers || {};\n    const claims = verifyJwt(headers);\n    const ownerId = claims.sub;\n    const body = inbound.body || {};\n\n    const idea = cleanText(body.idea, 1200);\n    const style = cleanText(body.style || '', 300);\n    const duration = Number(body.duration ?? 8);\n    const size = cleanText(body.size || '720x1280', 32);\n    const clientRequestId = parseClientRequestId(body.clientRequestId);\n    const ownerHash = userHash(ownerId);\n\n    if (idea.length < 3) {\n      return response(400, { status: 'failed', error: 'Please enter a more specific video idea.' });\n    }\n    if (!ALLOWED_DURATIONS.has(duration)) {\n      return response(400, { status: 'failed', error: 'Unsupported duration.' });\n    }\n    if (!ALLOWED_SIZES.has(size)) {\n      return response(400, { status: 'failed', error: 'Unsupported size.' });\n    }\n\n    const duplicate = await supabaseSelect(\n      'owner_id=eq.' + encodeURIComponent(ownerId) +\n      '&client_request_id=eq.' + encodeURIComponent(clientRequestId) +\n      '&select=id,status'\n    );\n    if (duplicate.length > 0) {\n      return response(200, { jobId: duplicate[0].id, status: duplicate[0].status });\n    }\n\n    const today = new Date();\n    today.setUTCHours(0, 0, 0, 0);\n    const todaysJobs = await supabaseSelect(\n      'owner_id=eq.' + encodeURIComponent(ownerId) +\n      '&created_at=gte.' + encodeURIComponent(today.toISOString()) +\n      '&select=id'\n    );\n    const dailyLimit = Number($env.N8N_VIDEO_DAILY_LIMIT || 5);\n    if (todaysJobs.length >= dailyLimit) {\n      return response(429, { status: 'failed', error: 'Daily generation limit reached.' });\n    }\n\n    const activeJobs = await supabaseSelect(\n      'owner_id=eq.' + encodeURIComponent(ownerId) +\n      '&status=in.(' + ACTIVE_STATUSES.join(',') + ')' +\n      '&select=id'\n    );\n    if (activeJobs.length >= 1) {\n      return response(429, { status: 'failed', error: 'Please wait for your active generation to finish.' });\n    }\n\n    const moderation = await moderate(idea + '\\n' + style, ownerId);\n    if (moderation.flagged) {\n      const blocked = await supabaseInsert({\n        owner_id: ownerId,\n        user_hash: ownerHash,\n        client_request_id: clientRequestId,\n        idea,\n        style,\n        duration_seconds: duration,\n        size,\n        model: $env.OPENAI_VIDEO_MODEL || 'sora-2',\n        status: 'blocked',\n        progress: 0,\n        moderation_result: moderation.raw,\n        error_message: 'Input blocked by safety moderation.',\n      });\n      return response(200, { jobId: blocked[0].id, status: 'blocked' });\n    }\n\n    const prompt = buildPrompt({ idea, style, duration, size });\n    const openaiVideo = await createOpenAiVideo({ prompt, size, duration, ownerId });\n    const openaiVideoId = openaiVideo.id;\n    if (!openaiVideoId) throw new Error('OpenAI did not return a video id.');\n\n    const inserted = await supabaseInsert({\n      owner_id: ownerId,\n      user_hash: ownerHash,\n      client_request_id: clientRequestId,\n      idea,\n      style,\n      prompt,\n      duration_seconds: duration,\n      size,\n      model: $env.OPENAI_VIDEO_MODEL || 'sora-2',\n      openai_video_id: openaiVideoId,\n      status: openaiVideo.status || 'queued',\n      progress: Number(openaiVideo.progress || 0),\n      provider_response: openaiVideo,\n    });\n\n    return response(202, {\n      jobId: inserted[0].id,\n      status: inserted[0].status || 'queued',\n    });\n  } catch (error) {\n    const status = error.status || 500;\n    const message = status >= 500 ? 'Video generation could not be started.' : error.message;\n    return response(status, { status: 'failed', error: message });\n  }\n}\n\nreturn await main();\n"
+      },
+      "id": "code-create-job",
+      "name": "Validate, Moderate, Create Sora Job",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -360,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.httpStatus || 200 }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Cache-Control",
+                "value": "no-store"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-generate",
+      "name": "Return Job Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        40,
+        80
+      ]
+    }
+  ],
+  "connections": {
+    "POST /webhook/video-generate": {
+      "main": [
+        [
+          {
+            "node": "Validate, Moderate, Create Sora Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate, Moderate, Create Sora Job": {
+      "main": [
+        [
+          {
+            "node": "Return Job Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveExecutionProgress": false,
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "all"
+  },
+  "staticData": null,
+  "pinData": {},
+  "tags": [
+    {
+      "name": "video-generation"
+    },
+    {
+      "name": "secure"
+    }
+  ]
+}

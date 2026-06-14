@@ -1,0 +1,14 @@
+{
+  "name": "secure-n8n-video-generator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:workflows": "node scripts/build-n8n-workflows.mjs",
+    "dev": "node server.mjs",
+    "start": "node server.mjs",
+    "check": "node --check server.mjs && node --check public/app.js && node --check website-backend/video-workflow-client.mjs && node --check scripts/build-n8n-workflows.mjs",
+    "check:workflows": "node scripts/build-n8n-workflows.mjs && git diff --exit-code -- n8n",
+    "test": "npm run check && npm run check:workflows"
+  }
+}

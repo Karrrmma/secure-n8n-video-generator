@@ -1,0 +1,123 @@
+{
+  "name": "Video Generator API - Status",
+  "nodes": [
+    {
+      "parameters": {
+        "width": 420,
+        "height": 260,
+        "content": "## Secure status polling\n\nPolls OpenAI, uploads completed MP4 files to private Supabase Storage, and returns one-hour signed playback URLs.\n\nKeep this webhook behind your website backend."
+      },
+      "id": "note-status",
+      "name": "Setup Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -760,
+        -260
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "video-status-v2",
+        "authentication": "none",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": ""
+        }
+      },
+      "id": "webhook-status",
+      "name": "GET /webhook/video-status",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -740,
+        80
+      ],
+      "webhookId": "c0ea44fe-664e-4198-832b-52cb60ddf85b"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst crypto = require('crypto');\nconst fetch = require('node-fetch');\n\nfunction response(status, body) {\n  return [{ json: { httpStatus: status, ...body } }];\n}\n\nfunction env(name, fallback = undefined) {\n  const value = $env[name] ?? fallback;\n  if (value === undefined || value === '') throw new Error('Missing required environment variable: ' + name);\n  return value;\n}\n\nfunction b64urlDecode(value) {\n  const normalized = value.replace(/-/g, '+').replace(/_/g, '/');\n  const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4);\n  return Buffer.from(padded, 'base64');\n}\n\nfunction b64urlEncode(buffer) {\n  return Buffer.from(buffer).toString('base64').replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/g, '');\n}\n\nfunction verifyJwt(headers) {\n  const auth = headers.authorization || headers.Authorization || '';\n  const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';\n  if (!token) throw Object.assign(new Error('Unauthorized'), { status: 401 });\n  const parts = token.split('.');\n  if (parts.length !== 3) throw Object.assign(new Error('Unauthorized'), { status: 401 });\n  const header = JSON.parse(b64urlDecode(parts[0]).toString('utf8'));\n  if (header.alg !== 'HS256') throw Object.assign(new Error('Unauthorized'), { status: 401 });\n  const expected = b64urlEncode(crypto.createHmac('sha256', env('N8N_VIDEO_JWT_SECRET')).update(parts[0] + '.' + parts[1]).digest());\n  if (!crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(parts[2]))) {\n    throw Object.assign(new Error('Unauthorized'), { status: 401 });\n  }\n  const claims = JSON.parse(b64urlDecode(parts[1]).toString('utf8'));\n  const now = Math.floor(Date.now() / 1000);\n  if (!claims.sub || typeof claims.sub !== 'string') throw Object.assign(new Error('Unauthorized'), { status: 401 });\n  if (claims.exp && now >= claims.exp) throw Object.assign(new Error('Unauthorized'), { status: 401 });\n  if (claims.nbf && now < claims.nbf) throw Object.assign(new Error('Unauthorized'), { status: 401 });\n  if (claims.aud && claims.aud !== ($env.N8N_VIDEO_JWT_AUDIENCE || 'n8n-video-workflow')) {\n    throw Object.assign(new Error('Unauthorized'), { status: 401 });\n  }\n  return claims;\n}\n\nasync function requestJson(url, options = {}) {\n  const res = await fetch(url, options);\n  const text = await res.text();\n  let body = null;\n  try {\n    body = text ? JSON.parse(text) : null;\n  } catch {\n    body = { raw: text };\n  }\n  if (!res.ok) {\n    const err = new Error('HTTP request failed');\n    err.status = res.status;\n    err.body = body;\n    throw err;\n  }\n  return body;\n}\n\nasync function requestBuffer(url, options = {}) {\n  const res = await fetch(url, options);\n  if (!res.ok) {\n    const err = new Error('HTTP request failed');\n    err.status = res.status;\n    err.body = await res.text();\n    throw err;\n  }\n  return Buffer.from(await res.arrayBuffer());\n}\n\nfunction supabaseHeaders(prefer) {\n  const key = env('SUPABASE_SERVICE_ROLE_KEY');\n  const headers = {\n    apikey: key,\n    Authorization: 'Bearer ' + key,\n    'Content-Type': 'application/json',\n  };\n  if (prefer) headers.Prefer = prefer;\n  return headers;\n}\n\nfunction supabaseUrl(path) {\n  return env('SUPABASE_URL').replace(/\\/$/, '') + path;\n}\n\nasync function supabaseSelect(query) {\n  return requestJson(supabaseUrl('/rest/v1/video_jobs?' + query), {\n    method: 'GET',\n    headers: supabaseHeaders(),\n  });\n}\n\nasync function supabasePatch(query, patch) {\n  return requestJson(supabaseUrl('/rest/v1/video_jobs?' + query), {\n    method: 'PATCH',\n    headers: supabaseHeaders('return=representation'),\n    body: JSON.stringify(patch),\n  });\n}\n\nasync function openAiStatus(videoId) {\n  return requestJson('https://api.openai.com/v1/videos/' + encodeURIComponent(videoId), {\n    method: 'GET',\n    headers: { Authorization: 'Bearer ' + env('OPENAI_API_KEY') },\n  });\n}\n\nasync function openAiContent(videoId) {\n  return requestBuffer('https://api.openai.com/v1/videos/' + encodeURIComponent(videoId) + '/content', {\n    method: 'GET',\n    headers: { Authorization: 'Bearer ' + env('OPENAI_API_KEY') },\n  });\n}\n\nasync function openAiDelete(videoId) {\n  try {\n    await fetch('https://api.openai.com/v1/videos/' + encodeURIComponent(videoId), {\n      method: 'DELETE',\n      headers: { Authorization: 'Bearer ' + env('OPENAI_API_KEY') },\n    });\n  } catch {}\n}\n\nasync function uploadVideo(path, buffer) {\n  const key = env('SUPABASE_SERVICE_ROLE_KEY');\n  const res = await fetch(supabaseUrl('/storage/v1/object/generated-videos/' + path), {\n    method: 'PUT',\n    headers: {\n      apikey: key,\n      Authorization: 'Bearer ' + key,\n      'Content-Type': 'video/mp4',\n      'Cache-Control': '3600',\n      'x-upsert': 'true',\n    },\n    body: buffer,\n  });\n  if (!res.ok) {\n    const err = new Error('Storage upload failed');\n    err.status = res.status;\n    err.body = await res.text();\n    throw err;\n  }\n}\n\nasync function signedUrl(path) {\n  const expiresIn = Number($env.VIDEO_SIGNED_URL_TTL_SECONDS || 3600);\n  const body = await requestJson(supabaseUrl('/storage/v1/object/sign/generated-videos/' + path), {\n    method: 'POST',\n    headers: supabaseHeaders(),\n    body: JSON.stringify({ expiresIn }),\n  });\n  const signed = body.signedURL || body.signedUrl;\n  if (!signed) throw new Error('Supabase did not return a signed URL.');\n  const base = env('SUPABASE_URL').replace(/\\/$/, '');\n  return signed.startsWith('http') ? signed : base + '/storage/v1' + signed;\n}\n\nfunction getJobId(inbound) {\n  const fromQuery = inbound.query?.jobId;\n  const fromParam = inbound.params?.jobId;\n  const value = String(fromQuery || fromParam || '').trim();\n  if (!/^[0-9a-f-]{36}$/i.test(value)) {\n    throw Object.assign(new Error('Invalid job id.'), { status: 400 });\n  }\n  return value.toLowerCase();\n}\n\nfunction failureMessage(provider = {}) {\n  const code = provider.error?.code || '';\n  if (code === 'moderation_blocked' || code === 'policy_violation') {\n    return 'OpenAI stopped this video because its safety filter flagged the request. Try simplifying the idea and removing references to real people, violence, copyrighted characters, or other sensitive content.';\n  }\n  if (code === 'rate_limit_exceeded' || code === 'rate_limit') {\n    return 'OpenAI is receiving too many requests right now. Please wait a few minutes and try again.';\n  }\n  if (code === 'invalid_prompt') {\n    return 'OpenAI could not generate this video from the prompt. Try describing one clear scene with fewer instructions.';\n  }\n  if (provider.status === 'expired') {\n    return 'The video job expired before it could finish. Please generate it again.';\n  }\n  if (provider.status === 'cancelled') {\n    return 'The video job was cancelled before it finished. Please generate it again.';\n  }\n  return 'The video provider could not finish this generation. Try a simpler prompt or generate it again in a few minutes.';\n}\n\nasync function main() {\n  try {\n    const inbound = $input.first().json || {};\n    const claims = verifyJwt(inbound.headers || {});\n    const ownerId = claims.sub;\n    const jobId = getJobId(inbound);\n\n    const rows = await supabaseSelect(\n      'id=eq.' + encodeURIComponent(jobId) +\n      '&owner_id=eq.' + encodeURIComponent(ownerId) +\n      '&select=*'\n    );\n    if (rows.length === 0) return response(404, { status: 'failed', error: 'Video job not found.' });\n\n    const job = rows[0];\n    if (job.status === 'blocked') {\n      return response(200, { jobId, status: 'blocked', progress: 0, videoUrl: null, error: 'This request was blocked by safety checks.' });\n    }\n    if (job.status === 'failed') {\n      return response(200, {\n        jobId,\n        status: 'failed',\n        progress: job.progress || 0,\n        videoUrl: null,\n        error: failureMessage(job.provider_response || {}),\n      });\n    }\n    if (job.status === 'completed' && job.video_path) {\n      return response(200, { jobId, status: 'completed', progress: 100, videoUrl: await signedUrl(job.video_path), error: null });\n    }\n    if (!job.openai_video_id) {\n      return response(200, { jobId, status: job.status || 'queued', progress: job.progress || 0, videoUrl: null, error: null });\n    }\n\n    const provider = await openAiStatus(job.openai_video_id);\n    const providerStatus = provider.status || 'in_progress';\n    const progress = Math.max(0, Math.min(100, Number(provider.progress || job.progress || 0)));\n\n    if (providerStatus === 'failed' || providerStatus === 'cancelled' || providerStatus === 'expired') {\n      const errorMessage = failureMessage(provider);\n      await supabasePatch('id=eq.' + encodeURIComponent(jobId), {\n        status: 'failed',\n        progress,\n        provider_response: provider,\n        error_message: errorMessage,\n      });\n      return response(200, { jobId, status: 'failed', progress, videoUrl: null, error: errorMessage });\n    }\n\n    if (providerStatus !== 'completed') {\n      const patched = await supabasePatch('id=eq.' + encodeURIComponent(jobId), {\n        status: providerStatus === 'queued' ? 'queued' : 'in_progress',\n        progress,\n        provider_response: provider,\n      });\n      const updated = patched[0] || {};\n      return response(200, { jobId, status: updated.status || 'in_progress', progress: updated.progress || progress, videoUrl: null, error: null });\n    }\n\n    const video = await openAiContent(job.openai_video_id);\n    const path = (job.user_hash || 'unknown') + '/' + jobId + '.mp4';\n    await uploadVideo(path, video);\n    const patched = await supabasePatch('id=eq.' + encodeURIComponent(jobId), {\n      status: 'completed',\n      progress: 100,\n      video_path: path,\n      completed_at: new Date().toISOString(),\n      provider_response: provider,\n    });\n    await openAiDelete(job.openai_video_id);\n\n    return response(200, {\n      jobId,\n      status: 'completed',\n      progress: 100,\n      videoUrl: await signedUrl(path),\n      error: null,\n    });\n  } catch (error) {\n    const status = error.status || 500;\n    const message = status >= 500 ? 'Video status could not be checked.' : error.message;\n    return response(status, { status: 'failed', videoUrl: null, error: message });\n  }\n}\n\nreturn await main();\n"
+      },
+      "id": "code-status",
+      "name": "Check Status, Upload, Sign URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -360,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.httpStatus || 200 }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Cache-Control",
+                "value": "no-store"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-status",
+      "name": "Return Status Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        40,
+        80
+      ]
+    }
+  ],
+  "connections": {
+    "GET /webhook/video-status": {
+      "main": [
+        [
+          {
+            "node": "Check Status, Upload, Sign URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Status, Upload, Sign URL": {
+      "main": [
+        [
+          {
+            "node": "Return Status Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveExecutionProgress": false,
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "all"
+  },
+  "staticData": null,
+  "pinData": {},
+  "tags": [
+    {
+      "name": "video-generation"
+    },
+    {
+      "name": "secure"
+    }
+  ]
+}

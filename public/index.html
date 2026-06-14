@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Video Generator</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="app">
+      <section class="composer" aria-labelledby="page-title">
+        <div class="title-row">
+          <div>
+            <p class="eyebrow">AI video workflow</p>
+            <h1 id="page-title">Generate a short-form video</h1>
+          </div>
+          <span id="connectionStatus" class="status-pill">Ready</span>
+        </div>
+
+        <form id="videoForm" class="form">
+          <label for="idea">Video idea</label>
+          <textarea
+            id="idea"
+            name="idea"
+            maxlength="1200"
+            rows="6"
+            required
+            placeholder="A cinematic video of a futuristic food truck on Mars"
+          ></textarea>
+
+          <label for="style">Style</label>
+          <input
+            id="style"
+            name="style"
+            maxlength="300"
+            placeholder="fast-paced, colorful, viral TikTok style"
+          >
+
+          <div class="grid">
+            <label>
+              Duration
+              <select name="duration" id="duration">
+                <option value="8" selected>8 seconds</option>
+                <option value="4">4 seconds</option>
+                <option value="12">12 seconds</option>
+              </select>
+            </label>
+
+            <label>
+              Format
+              <select name="size" id="size">
+                <option value="720x1280" selected>Vertical 720x1280</option>
+                <option value="1024x1792">Vertical 1024x1792</option>
+                <option value="1280x720">Landscape 1280x720</option>
+                <option value="1792x1024">Landscape 1792x1024</option>
+              </select>
+            </label>
+          </div>
+
+          <button id="submitButton" type="submit">
+            <span class="button-spinner" aria-hidden="true"></span>
+            <span class="button-label">Generate video</span>
+          </button>
+        </form>
+      </section>
+
+      <section class="result" aria-labelledby="result-title">
+        <div class="result-header">
+          <div>
+            <p class="eyebrow">Output</p>
+            <h2 id="result-title">Generation status</h2>
+          </div>
+          <span id="jobId" class="job-id">No job yet</span>
+        </div>
+
+        <div id="emptyState" class="empty-state">
+          Submit an idea to start a secure n8n workflow. The final video will appear here when it is ready.
+        </div>
+
+        <div id="progressPanel" class="progress-panel hidden">
+          <div class="progress-copy">
+            <strong id="statusLabel">Queued</strong>
+            <span id="statusDetail">Waiting for the workflow to start.</span>
+          </div>
+          <div class="bar" aria-hidden="true">
+            <span id="progressBar"></span>
+          </div>
+          <div class="status-meta">
+            <span><strong id="progressValue">0%</strong> estimated</span>
+            <span id="elapsedTime">Just started</span>
+          </div>
+          <ol id="stageList" class="stage-list" aria-label="Generation stages">
+            <li data-stage="request">Request accepted</li>
+            <li data-stage="queue">Waiting for video capacity</li>
+            <li data-stage="generate">Generating frames</li>
+            <li data-stage="finalize">Finalizing video</li>
+            <li data-stage="upload">Preparing playback</li>
+          </ol>
+          <div class="activity-line" aria-live="polite">
+            <span class="activity-dot" aria-hidden="true"></span>
+            <span id="activityText">Waiting to begin</span>
+            <span id="lastChecked">Not checked yet</span>
+          </div>
+        </div>
+
+        <video id="videoPlayer" class="video hidden" controls playsinline></video>
+        <a id="downloadLink" class="download hidden" href="#" target="_blank" rel="noreferrer">Open video URL</a>
+      </section>
+    </main>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

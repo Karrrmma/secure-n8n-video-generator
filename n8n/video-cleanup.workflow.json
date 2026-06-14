@@ -1,0 +1,83 @@
+{
+  "name": "Secure Video Generation - Cleanup",
+  "nodes": [
+    {
+      "parameters": {
+        "width": 420,
+        "height": 260,
+        "content": "## Cleanup\n\nRuns daily and removes video job rows plus Supabase Storage objects older than `N8N_VIDEO_RETENTION_DAYS`.\n\nDefault retention: 30 days."
+      },
+      "id": "note-cleanup",
+      "name": "Setup Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -760,
+        -240
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "17 3 * * *"
+            }
+          ]
+        }
+      },
+      "id": "schedule-cleanup",
+      "name": "Daily Cleanup Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -720,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst fetch = require('node-fetch');\n\nfunction response(status, body) {\n  return [{ json: { httpStatus: status, ...body } }];\n}\n\nfunction env(name, fallback = undefined) {\n  const value = $env[name] ?? fallback;\n  if (value === undefined || value === '') throw new Error('Missing required environment variable: ' + name);\n  return value;\n}\n\nfunction supabaseUrl(path) {\n  return env('SUPABASE_URL').replace(/\\/$/, '') + path;\n}\n\nfunction supabaseHeaders(prefer) {\n  const key = env('SUPABASE_SERVICE_ROLE_KEY');\n  const headers = {\n    apikey: key,\n    Authorization: 'Bearer ' + key,\n    'Content-Type': 'application/json',\n  };\n  if (prefer) headers.Prefer = prefer;\n  return headers;\n}\n\nasync function requestJson(url, options = {}) {\n  const res = await fetch(url, options);\n  const text = await res.text();\n  let body = null;\n  try {\n    body = text ? JSON.parse(text) : null;\n  } catch {\n    body = { raw: text };\n  }\n  if (!res.ok) {\n    const err = new Error('HTTP request failed');\n    err.status = res.status;\n    err.body = body;\n    throw err;\n  }\n  return body;\n}\n\nasync function deleteStorage(paths) {\n  if (paths.length === 0) return;\n  await requestJson(supabaseUrl('/storage/v1/object/generated-videos'), {\n    method: 'DELETE',\n    headers: supabaseHeaders(),\n    body: JSON.stringify({ prefixes: paths }),\n  });\n}\n\nasync function main() {\n  const days = Number($env.N8N_VIDEO_RETENTION_DAYS || 30);\n  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();\n  const oldJobs = await requestJson(\n    supabaseUrl('/rest/v1/video_jobs?created_at=lt.' + encodeURIComponent(cutoff) + '&select=id,video_path'),\n    { method: 'GET', headers: supabaseHeaders() }\n  );\n\n  const paths = oldJobs.map((job) => job.video_path).filter(Boolean);\n  for (let i = 0; i < paths.length; i += 100) {\n    await deleteStorage(paths.slice(i, i + 100));\n  }\n\n  await requestJson(\n    supabaseUrl('/rest/v1/video_jobs?created_at=lt.' + encodeURIComponent(cutoff)),\n    { method: 'DELETE', headers: supabaseHeaders() }\n  );\n\n  return response(200, {\n    deletedJobs: oldJobs.length,\n    deletedFiles: paths.length,\n    cutoff,\n  });\n}\n\nreturn await main();\n"
+      },
+      "id": "code-cleanup",
+      "name": "Delete Expired Jobs and Files",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -360,
+        80
+      ]
+    }
+  ],
+  "connections": {
+    "Daily Cleanup Trigger": {
+      "main": [
+        [
+          {
+            "node": "Delete Expired Jobs and Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveExecutionProgress": false,
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "all"
+  },
+  "staticData": null,
+  "pinData": {},
+  "tags": [
+    {
+      "name": "video-generation"
+    },
+    {
+      "name": "cleanup"
+    }
+  ]
+}
