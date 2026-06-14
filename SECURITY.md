@@ -15,9 +15,6 @@ reproduction steps that expose a running deployment.
 - Keep the `generated-videos` bucket private.
 - Enable Row Level Security on `public.video_jobs`.
 - Restrict public access to the n8n editor.
-- Enable two-factor authentication for the online n8n owner account.
-- Mount persistent storage for `/home/node/.n8n` and keep
-  `N8N_ENCRYPTION_KEY` stable.
 - Retain generic user-facing errors and restricted provider logs.
 - Rotate credentials immediately if accidental exposure is suspected.
 
