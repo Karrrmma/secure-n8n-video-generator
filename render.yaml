@@ -1,0 +1,68 @@
+services:
+  - type: web
+    name: secure-video-n8n
+    runtime: docker
+    plan: starter
+    region: oregon
+    autoDeployTrigger: checksPass
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /healthz
+    disk:
+      name: n8n-data
+      mountPath: /home/node/.n8n
+      sizeGB: 1
+    envVars:
+      - key: N8N_PORT
+        value: "5678"
+      - key: N8N_LISTEN_ADDRESS
+        value: 0.0.0.0
+      - key: N8N_PROTOCOL
+        value: https
+      - key: WEBHOOK_URL
+        sync: false
+      - key: N8N_EDITOR_BASE_URL
+        sync: false
+      - key: N8N_PROXY_HOPS
+        value: "1"
+      - key: N8N_ENCRYPTION_KEY
+        generateValue: true
+      - key: N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS
+        value: "true"
+      - key: N8N_DIAGNOSTICS_ENABLED
+        value: "false"
+      - key: NODE_FUNCTION_ALLOW_BUILTIN
+        value: crypto
+      - key: NODE_FUNCTION_ALLOW_EXTERNAL
+        value: node-fetch
+      - key: N8N_BLOCK_ENV_ACCESS_IN_NODE
+        value: "false"
+      - key: GENERIC_TIMEZONE
+        value: America/Los_Angeles
+      - key: TZ
+        value: America/Los_Angeles
+      - key: EXECUTIONS_DATA_SAVE_ON_SUCCESS
+        value: none
+      - key: EXECUTIONS_DATA_SAVE_ON_ERROR
+        value: all
+      - key: EXECUTIONS_DATA_PRUNE
+        value: "true"
+      - key: EXECUTIONS_DATA_MAX_AGE
+        value: "168"
+      - key: N8N_VIDEO_JWT_SECRET
+        sync: false
+      - key: N8N_VIDEO_USER_HASH_SECRET
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: OPENAI_VIDEO_MODEL
+        value: sora-2
+      - key: N8N_VIDEO_DAILY_LIMIT
+        value: "5"
+      - key: VIDEO_SIGNED_URL_TTL_SECONDS
+        value: "3600"
+      - key: N8N_VIDEO_RETENTION_DAYS
+        value: "30"

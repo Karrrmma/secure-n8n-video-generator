@@ -96,6 +96,20 @@ N8N_VIDEO_GENERATE_URL="http://127.0.0.1:5678/webhook/video-generate-v2"
 N8N_VIDEO_STATUS_URL="http://127.0.0.1:5678/webhook/video-status-v2"
 ```
 
+## Deploy n8n Online
+
+The existing workflows are designed for hosted self-managed n8n because their
+trusted Code nodes require environment-variable access and `node-fetch`.
+
+This repository includes a secure Render Blueprint, a persistent n8n disk, and
+a custom Docker image with the required module:
+
+[Deploy n8n on Render](https://render.com/deploy?repo=https://github.com/Karrrmma/secure-n8n-video-generator)
+
+Follow the complete [online n8n deployment guide](docs/deploy-online-n8n.md) to
+configure secrets, import the three workflows from GitHub, publish them, and
+connect the website backend.
+
 ## Run n8n
 
 Start ngrok in one terminal:
